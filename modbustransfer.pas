@@ -50,9 +50,18 @@ type
     protected
       FOffset: Integer;
       FDataType: TMbtDataType;
+      FInputList: TMbtInputList;
+    public
+      constructor Create;
+      destructor Destroy;
+      property InputList: TMbtInputList read FInputList;
     published
       property Offset: Integer read FOffset write FOffset;
       property DataType: TMbtDataType read FDataType write FDataType;
+  end;
+
+  TMbtModbusOutputList = class(TFPGList<TMbtModbusOutput>)
+
   end;
 
   TMbtSqlExecAction = class(TMbtCustomAction)
@@ -89,9 +98,17 @@ type
       FStartRegister: Word;
       FRegisterCount: Word;
       FDeviceAddress: Byte;
+      FOutputList: TMbtModbusOutputList;
       procedure CheckError(Res: Integer);
     public
       procedure Execute; override;
+      property OutputList: TMbtModbusOutputList read FOutputList;
+      constructor Create;
+      destructor Destroy; override;
+      procedure CopyWord(const Registers: Array of Word; Offset: Integer; Input: TMbtInput);
+      procedure CopyInt(const Registers: Array of Word; Offset: Integer; Input: TMbtInput);
+      procedure CopySingle(const Registers: Array of Word; Offset: Integer; Input: TMbtInput);
+      procedure CopyDouble(const Registers: Array of Word; Offset: Integer; Input: TMbtInput);
     published
       property ComPort:String read FComPort write FComPort;
       property BaudRate: Integer read FBaudRate write FBaudRate;
@@ -186,10 +203,75 @@ end;
 
 
 
+
+
+
+constructor TMbtModbusOutput.Create;
+begin
+  inherited;
+  FInputList := TMbtInputList.Create;
+end;
+
+destructor TMbtModbusOutput.Destroy;
+begin
+  if Assigned(FInputList) then
+    FreeAndNil(FInputList);
+end;
+
+
+
+
+
+
+constructor TMbtModbusAction.Create;
+begin
+  inherited;
+  FOutputList := TMbtModbusOutputList.Create;
+end;
+
+destructor TMbtModbusAction.Destroy;
+begin
+  if Assigned(FOutputList) then
+    FreeAndNil(FOutputList);
+  inherited;
+end;
+
 procedure TMbtModbusAction.CheckError(Res: Integer);
 begin
   if res <> 0 then
     raise Exception.Create('Error: $' + IntToHex(Res, 8));
+end;
+
+procedure TMbtModbusAction.CopyWord(const Registers: Array of Word; Offset: Integer; Input: TMbtInput);
+begin
+  if Offset > High(Registers) then
+    raise Exception.Create('Offset ' + IntToStr(Offset) + ' is out of scope for Words.') ;
+
+  Input.SetAsWord(Registers[Offset]);
+end;
+
+procedure TMbtModbusAction.CopyInt(const Registers: Array of Word; Offset: Integer; Input: TMbtInput);
+begin
+  if (Offset + (SizeOf(Integer) div 2) - 1) > High(Registers) then
+    raise Exception.Create('Offset ' + IntToStr(Offset) + ' is out of scope for Integer.') ;
+
+  Input.SetAsInteger(PInteger(@Registers[Offset])^);
+end;
+
+procedure TMbtModbusAction.CopySingle(const Registers: Array of Word; Offset: Integer; Input: TMbtInput);
+begin
+  if (Offset + (SizeOf(Single) div 2) - 1) > High(Registers) then
+    raise Exception.Create('Offset ' + IntToStr(Offset) + ' is out of scope for Single.') ;
+
+  Input.SetAsSingle(PSingle(@Registers[Offset])^);
+end;
+
+procedure TMbtModbusAction.CopyDouble(const Registers: Array of Word; Offset: Integer; Input: TMbtInput);
+begin
+  if (Offset + (SizeOf(Double) div 2) - 1) > High(Registers) then
+    raise Exception.Create('Offset ' + IntToStr(Offset) + ' is out of scope for Double.') ;
+
+  Input.SetAsSingle(PSingle(@Registers[Offset])^);
 end;
 
 procedure TMbtModbusAction.Execute;
@@ -197,6 +279,7 @@ var
   Dev: TSnapMBBroker;
   Res: Integer;
   Registers: Array of Word;
+  x, y: Integer;
 begin
   SetLength(Registers, FRegisterCount);
 
@@ -209,7 +292,16 @@ begin
   Res := Dev.ReadHoldingRegisters(FDeviceAddress, FStartRegister, FRegisterCount, @Registers[0]);
   CheckError(res);
 
-  // Todo: Copy Data to registers
+  for x := 0 to FOutputList.Count - 1 do begin
+    for y := 0 to FOutputList.Items[x].InputList.Count - 1 do begin;
+      case FOutputList.Items[x].DataType of
+        dtWord: CopyWord(Registers, FOutputList.Items[x].Offset, FOutputList.Items[x].InputList.Items[y]);
+        dtInteger: CopyInt(Registers, FOutputList.Items[x].Offset, FOutputList.Items[x].InputList.Items[y]);
+        dtSingle: CopySingle(Registers, FOutputList.Items[x].Offset, FOutputList.Items[x].InputList.Items[y]);
+        dtDouble: CopyDouble(Registers, FOutputList.Items[x].Offset, FOutputList.Items[x].InputList.Items[y]);
+      end;
+    end;
+  end;
 end;
 
 end.
