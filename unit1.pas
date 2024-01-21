@@ -5,7 +5,8 @@ unit Unit1;
 interface
 
 uses
-  Classes, SysUtils, Forms, Controls, Graphics, Dialogs, StdCtrls, SnapMB;
+  Classes, SysUtils, Forms, Controls, Graphics, Dialogs, StdCtrls, SnapMB,
+  ZConnection;
 
 type
 
@@ -14,8 +15,12 @@ type
   TForm1 = class(TForm)
     Button1: TButton;
     Button2: TButton;
+    Button3: TButton;
+    M: TMemo;
+    ZConnection1: TZConnection;
     procedure Button1Click(Sender: TObject);
     procedure Button2Click(Sender: TObject);
+    procedure Button3Click(Sender: TObject);
   private
     Dev: TSnapMBBroker;
     Registers: Array[0..9] of WORD;
@@ -65,6 +70,21 @@ begin
   Res := Dev.ReadHoldingRegisters(1, 1, 10, @Registers[0]);
   CheckError(res);
   ShowMessage(IntToStr(Registers[2]));
+end;
+
+procedure TForm1.Button3Click(Sender: TObject);
+var
+  Action1: TMbtModbusAction;
+begin
+  Action1 := TMbtModbusAction.Create;
+  Action1.BaudRate := 9600;
+  Action1.ComPort := 'COM1';
+  Action1.DataBits := 8;
+  Action1.DeviceAddress := 1;
+  Action1.FlowControl := flowNone;
+  Action1.ModbusFormat := sfRTU;
+  Action1.Parity := 'N';
+  Action1.;
 end;
 
 end.

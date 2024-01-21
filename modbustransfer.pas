@@ -5,7 +5,7 @@ unit ModbusTransfer;
 interface
 
 uses
-  Classes, SysUtils, ZDataset, SnapMB, ZDatasetParam, fgl;
+  Classes, SysUtils, ZDataset, SnapMB, ZDatasetParam, fgl, ZConnection;
 
 type
   TMbtCustomAction = class
@@ -53,7 +53,7 @@ type
       FInputList: TMbtInputList;
     public
       constructor Create;
-      destructor Destroy;
+      destructor Destroy; override;
       property InputList: TMbtInputList read FInputList;
     published
       property Offset: Integer read FOffset write FOffset;
@@ -66,22 +66,26 @@ type
 
   TMbtSqlExecAction = class(TMbtCustomAction)
     protected
-      Query: TZQuery;
+      FQuery: TZQuery;
       procedure SetSQL(NewSQL: String);
       function GetSQL: String;
     public
       procedure Execute; override;
+      constructor Create(Connection: TZConnection);
+      destructor Destroy; override;
     published
       property SQL: String read GetSQL write SetSQL;
   end;
 
   TMbtSqlSelectAction = class(TMbtCustomAction)
     protected
-      Query: TZQuery;
+      FQuery: TZQuery;
       procedure SetSQL(NewSQL: String);
       function GetSQL: String;
     public
       procedure Execute; override;
+      constructor Create(Connection: TZConnection);
+      destructor Destroy; override;
     published
       property SQL: String read GetSQL write SetSQL;
   end;
@@ -163,21 +167,33 @@ end;
 
 
 
+constructor TMbtSqlExecAction.Create(Connection: TZConnection);
+begin
+  inherited Create;
+  FQuery := TZQuery.Create(nil);
+  FQuery.Connection := Connection;
+end;
 
+destructor TMbtSqlExecAction.Destroy;
+begin
+  if Assigned(FQuery) then
+    FreeAndNil(FQuery);
+  inherited;
+end;
 
 procedure TMbtSqlExecAction.SetSQL(NewSQL: String);
 begin
-  Query.SQL.Text := NewSQL;
+  FQuery.SQL.Text := NewSQL;
 end;
 
 function TMbtSqlExecAction.GetSQL: String;
 begin
-  Result := Query.SQL.Text;
+  Result := FQuery.SQL.Text;
 end;
 
 procedure TMbtSqlExecAction.Execute;
 begin
-  Query.ExecSQL;
+  FQuery.ExecSQL;
 end;
 
 
@@ -185,19 +201,32 @@ end;
 
 
 
+constructor TMbtSqlSelectAction.Create(Connection: TZConnection);
+begin
+  inherited Create;
+  FQuery := TZQuery.Create(nil);
+  FQuery.Connection := Connection;
+end;
+
+destructor TMbtSqlSelectAction.Destroy;
+begin
+  if Assigned(FQuery) then
+    FreeAndNil(FQuery);
+end;
+
 procedure TMbtSqlSelectAction.SetSQL(NewSQL: String);
 begin
-  Query.SQL.Text := NewSQL;
+  FQuery.SQL.Text := NewSQL;
 end;
 
 function TMbtSqlSelectAction.GetSQL: String;
 begin
-  Result := Query.SQL.Text;
+  Result := FQuery.SQL.Text;
 end;
 
 procedure TMbtSqlSelectAction.Execute;
 begin
-  Query.Open;
+  FQuery.Open;
   //Todo: Ergebnisse zuweisen
 end;
 
