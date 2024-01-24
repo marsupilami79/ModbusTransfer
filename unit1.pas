@@ -75,16 +75,29 @@ end;
 procedure TForm1.Button3Click(Sender: TObject);
 var
   Action1: TMbtModbusAction;
+  OutPut: TMbtModbusOutput;
+  Action2: TMbtSqlExecAction;
 begin
   Action1 := TMbtModbusAction.Create;
-  Action1.BaudRate := 9600;
   Action1.ComPort := 'COM1';
-  Action1.DataBits := 8;
-  Action1.DeviceAddress := 1;
-  Action1.FlowControl := flowNone;
+  Action1.BaudRate := 9600;
   Action1.ModbusFormat := sfRTU;
   Action1.Parity := 'N';
-  Action1.;
+  Action1.DataBits := 8;
+  Action1.StopBits := 1;
+  Action1.FlowControl := flowNone;
+  Action1.DeviceAddress := 1;
+  Action1.StartRegister := 0;
+  Action1.RegisterCount := 10;
+
+  OutPut := TMbtModbusOutput.Create;
+  OutPut.DataType := dtWord;
+  OutPut.Offset := 1;
+  Action1.OutputList.Add(OutPut);
+
+  Action2 := TMbtSqlExecAction.Create(ZConnection1);
+  Action2.SQL := 'insert into testdata (ID, DATA1) values (GEN_ID(TEST, 1), :DATA1)';
+  //OutPut.InputList.Add(Action2.);
 end;
 
 end.
