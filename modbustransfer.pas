@@ -67,12 +67,14 @@ type
   TMbtSqlExecAction = class(TMbtCustomAction)
     protected
       FQuery: TZQuery;
+      FInputList: TMbtInputList;
       procedure SetSQL(NewSQL: String);
       function GetSQL: String;
     public
       procedure Execute; override;
       constructor Create(Connection: TZConnection);
       destructor Destroy; override;
+      property InputList: TMbtInputList read FInputList;
     published
       property SQL: String read GetSQL write SetSQL;
   end;
@@ -172,18 +174,27 @@ begin
   inherited Create;
   FQuery := TZQuery.Create(nil);
   FQuery.Connection := Connection;
+  FInputList := TMbtInputList.Create;
 end;
 
 destructor TMbtSqlExecAction.Destroy;
 begin
+  if Assigned(FInputList) then
+    FreeAndNil(FInputList);
   if Assigned(FQuery) then
     FreeAndNil(FQuery);
   inherited;
 end;
 
 procedure TMbtSqlExecAction.SetSQL(NewSQL: String);
+var
+  x: Integer;
 begin
   FQuery.SQL.Text := NewSQL;
+  FInputList.Clear;
+  for x := 0 to FQuery.Params.Count - 1 do begin
+    FInputList.Add(TMbtInput.Create(FQuery.Params[x]));
+  end;
 end;
 
 function TMbtSqlExecAction.GetSQL: String;
