@@ -41,6 +41,11 @@ uses ModbusTransfer;
 
 { TForm1 }
 
+procedure Log(Message: String);
+begin
+  Form1.M.Lines.Append(Message);
+end;
+
 procedure CheckError(Res: Integer);
 begin
   if res <> 0 then
@@ -76,13 +81,13 @@ end;
 
 procedure TForm1.Button3Click(Sender: TObject);
 var
-  Action1: TMbtModbusAction;
+  Action1: TMbtReadHoldingRegistersAction;
   Output: TMbtModbusOutput;
   Action2: TMbtSqlExecAction;
   x: Integer;
 begin
   ZConnection1.Connect;
-  Action1 := TMbtModbusAction.Create;
+  Action1 := TMbtReadHoldingRegistersAction.Create;
   Action1.ComPort := 'COM6';
   Action1.BaudRate := 9600;
   Action1.ModbusFormat := sfRTU;
@@ -113,17 +118,13 @@ end;
 
 procedure TForm1.Button4Click(Sender: TObject);
 var
-  Doc: IXmlDocument;
-  RootList: IXMLNodeList;
-  GroupList: IXMLNodeList;
+  Config: TMbtConfig;
 begin
-  Doc := TZXmlDocument.Create as IXmlDocument;
-  Doc.LoadFromFile('c:\test.xml');
-  RootList := Doc.GetChildNodes;
-  if RootList.Count > 0 then begin;
-    GroupList := RootList.Get(0).GetChildNodes;
-
-  end;
+  Config := TMbtConfig.Create;
+  Config.LogProcedure := Log;
+  Config.LoadFromFile(ParamStr(0) + '.xml');
+  //Config.Execute;
+  M.Lines.Add('--> Done');
 end;
 
 end.

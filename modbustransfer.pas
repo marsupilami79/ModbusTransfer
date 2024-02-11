@@ -5,17 +5,10 @@ unit ModbusTransfer;
 interface
 
 uses
-  Classes, SysUtils, ZDataset, SnapMB, ZDatasetParam, fgl, ZConnection;
+  Classes, SysUtils, ZDataset, SnapMB, ZDatasetParam, fgl, ZConnection, ZXmlCompat;
 
 type
-  TMbtCustomAction = class
-    protected
-      FName: String;
-    public
-      procedure Execute; virtual; abstract;
-    published
-      property Name: String read FName write FName;
-  end;
+  TLogProcedure = procedure(Msg: String);
 
   TMbtInput = class
     protected
@@ -32,7 +25,24 @@ type
   end;
 
   TMbtInputList = class(TFPGList<TMbtInput>)
+    function Find(InputName: String): TMbtInput;
   end;
+
+
+  TMbtCustomAction = class
+    protected
+      FName: String;
+      FInputList: TMbtInputList;
+    public
+      procedure Execute; virtual; abstract;
+      property InputList: TMbtInputList read FInputList;
+      constructor Create;
+      destructor Destroy;
+    published
+      property Name: String read FName write FName;
+  end;
+
+
 
   TMbtCustomOutput = class
     protected
@@ -67,14 +77,12 @@ type
   TMbtSqlExecAction = class(TMbtCustomAction)
     protected
       FQuery: TZQuery;
-      FInputList: TMbtInputList;
       procedure SetSQL(NewSQL: String);
       function GetSQL: String;
     public
       procedure Execute; override;
       constructor Create(Connection: TZConnection);
-      destructor Destroy; override;
-      property InputList: TMbtInputList read FInputList;
+      destructor Destroy;
     published
       property SQL: String read GetSQL write SetSQL;
   end;
@@ -87,12 +95,12 @@ type
     public
       procedure Execute; override;
       constructor Create(Connection: TZConnection);
-      destructor Destroy; override;
+      destructor Destroy;
     published
       property SQL: String read GetSQL write SetSQL;
   end;
 
-  TMbtModbusAction = class(TMbtCustomAction)
+  TMbtReadHoldingRegistersAction = class(TMbtCustomAction)
     protected
       FComPort: String;
       FBaudRate: Integer;
@@ -110,7 +118,7 @@ type
       procedure Execute; override;
       property OutputList: TMbtModbusOutputList read FOutputList;
       constructor Create;
-      destructor Destroy; override;
+      destructor Destroy;
       procedure CopyWord(const Registers: Array of Word; Offset: Integer; Input: TMbtInput);
       procedure CopyInt(const Registers: Array of Word; Offset: Integer; Input: TMbtInput);
       procedure CopySingle(const Registers: Array of Word; Offset: Integer; Input: TMbtInput);
@@ -128,7 +136,65 @@ type
       property DeviceAddress: Byte read FDeviceAddress write FDeviceAddress;
   end;
 
+  TMbtActionGroup = class(TFPGList<TMbtCustomAction>)
+    protected
+      FName: String;
+    public
+      function FindAction(ActionName: String): TMbtCustomAction;
+      property Name: String read FName write FName;
+  end;
+
+  TMbtGroupList = TFPGList<TMbtActionGroup>;
+
+  TMbtConfig = class
+    protected
+      FConnection: TZConnection;
+      FGroupList: TMbtGroupList;
+      FLogProcedure: TLogProcedure;
+      procedure LoadGroup(Node: IXMLNode);
+      procedure LoadDbConfig(Node: IXMLNode);
+      function LoadSqlExecAction(Node: IXMLNode): TMbtSqlExecAction;
+      function LoadSqlSelectAction(Node: IXMLNode): TMbtSqlSelectAction;
+      function LoadReadRegistersAction(Node: IXMLNode; ActionGroup: TMbtActionGroup): TMbtReadHoldingRegistersAction;
+      procedure LoadModbusOutputs(Action: TMbtReadHoldingRegistersAction; OutputList: IXMLNodeList; ActionGroup: TMbtActionGroup);
+      procedure LoadConnectedInputs(InputList: TMbtInputList; NodeList: IXMLNodeList; ActionGroup: TMbtActionGroup; const ActionName: String; const OutputNo: Integer);
+      procedure Log(Msg: String);
+    public
+      procedure LoadFromFile(AFileName: String);
+      procedure Execute;
+      constructor Create;
+      destructor Destroy;
+      property LogProcedure: TLogProcedure read FLogProcedure write FLogProcedure;
+  end;
+
 implementation
+
+uses
+  variants;
+
+function VarToInt(const AVar: Variant): Integer;
+begin
+  if VarIsNull(AVar) then Result := 0 else
+    if VarIsOrdinal(AVar) then
+      Result := AVar
+    else
+      Result := StrToIntDef(VarToStr(AVar), 0);
+end;
+
+
+constructor TMbtCustomAction.Create;
+begin
+  inherited;
+  FInputList := TMbtInputList.Create;
+end;
+
+destructor TMbtCustomAction.Destroy;
+begin
+  if Assigned(FInputList) then
+    FreeAndNil(FInputList);
+  inherited;
+end;
+
 
 constructor TMbtCustomOutput.Create;
 begin
@@ -144,6 +210,7 @@ Constructor TMbtInput.Create(ZParam: TZParam);
 begin
   inherited Create();
   FParameter := ZParam;
+  FName := ZParam.Name;
 end;
 
 procedure TMbtInput.SetAsInteger(NewValue: Integer);
@@ -174,13 +241,10 @@ begin
   inherited Create;
   FQuery := TZQuery.Create(nil);
   FQuery.Connection := Connection;
-  FInputList := TMbtInputList.Create;
 end;
 
 destructor TMbtSqlExecAction.Destroy;
 begin
-  if Assigned(FInputList) then
-    FreeAndNil(FInputList);
   if Assigned(FQuery) then
     FreeAndNil(FQuery);
   inherited;
@@ -189,11 +253,15 @@ end;
 procedure TMbtSqlExecAction.SetSQL(NewSQL: String);
 var
   x: Integer;
+  Input: TMbtInput;
+  ParamCount: Integer;
 begin
   FQuery.SQL.Text := NewSQL;
+  ParamCount := FQuery.Params.Count;
   FInputList.Clear;
-  for x := 0 to FQuery.Params.Count - 1 do begin
-    FInputList.Add(TMbtInput.Create(FQuery.Params[x]));
+  for x := 0 to ParamCount - 1 do begin
+    Input := TMbtInput.Create(FQuery.Params[x]);
+    FInputList.Add(Input);
   end;
 end;
 
@@ -263,26 +331,26 @@ end;
 
 
 
-constructor TMbtModbusAction.Create;
+constructor TMbtReadHoldingRegistersAction.Create;
 begin
   inherited;
   FOutputList := TMbtModbusOutputList.Create;
 end;
 
-destructor TMbtModbusAction.Destroy;
+destructor TMbtReadHoldingRegistersAction.Destroy;
 begin
   if Assigned(FOutputList) then
     FreeAndNil(FOutputList);
   inherited;
 end;
 
-procedure TMbtModbusAction.CheckError(Res: Integer);
+procedure TMbtReadHoldingRegistersAction.CheckError(Res: Integer);
 begin
   if res <> 0 then
-    raise Exception.Create('Error: $' + IntToHex(Res, 8));
+    raise Exception.Create('Modbus Error: $' + IntToHex(Res, 8));
 end;
 
-procedure TMbtModbusAction.CopyWord(const Registers: Array of Word; Offset: Integer; Input: TMbtInput);
+procedure TMbtReadHoldingRegistersAction.CopyWord(const Registers: Array of Word; Offset: Integer; Input: TMbtInput);
 begin
   if Offset > High(Registers) then
     raise Exception.Create('Offset ' + IntToStr(Offset) + ' is out of scope for Words.') ;
@@ -290,7 +358,7 @@ begin
   Input.SetAsWord(Registers[Offset]);
 end;
 
-procedure TMbtModbusAction.CopyInt(const Registers: Array of Word; Offset: Integer; Input: TMbtInput);
+procedure TMbtReadHoldingRegistersAction.CopyInt(const Registers: Array of Word; Offset: Integer; Input: TMbtInput);
 begin
   if (Offset + (SizeOf(Integer) div 2) - 1) > High(Registers) then
     raise Exception.Create('Offset ' + IntToStr(Offset) + ' is out of scope for Integer.') ;
@@ -298,7 +366,7 @@ begin
   Input.SetAsInteger(PInteger(@Registers[Offset])^);
 end;
 
-procedure TMbtModbusAction.CopySingle(const Registers: Array of Word; Offset: Integer; Input: TMbtInput);
+procedure TMbtReadHoldingRegistersAction.CopySingle(const Registers: Array of Word; Offset: Integer; Input: TMbtInput);
 begin
   if (Offset + (SizeOf(Single) div 2) - 1) > High(Registers) then
     raise Exception.Create('Offset ' + IntToStr(Offset) + ' is out of scope for Single.') ;
@@ -306,7 +374,7 @@ begin
   Input.SetAsSingle(PSingle(@Registers[Offset])^);
 end;
 
-procedure TMbtModbusAction.CopyDouble(const Registers: Array of Word; Offset: Integer; Input: TMbtInput);
+procedure TMbtReadHoldingRegistersAction.CopyDouble(const Registers: Array of Word; Offset: Integer; Input: TMbtInput);
 begin
   if (Offset + (SizeOf(Double) div 2) - 1) > High(Registers) then
     raise Exception.Create('Offset ' + IntToStr(Offset) + ' is out of scope for Double.') ;
@@ -314,7 +382,7 @@ begin
   Input.SetAsSingle(PSingle(@Registers[Offset])^);
 end;
 
-procedure TMbtModbusAction.Execute;
+procedure TMbtReadHoldingRegistersAction.Execute;
 var
   Dev: TSnapMBBroker;
   Res: Integer;
@@ -342,6 +410,322 @@ begin
       end;
     end;
   end;
+end;
+
+
+
+function TMbtActionGroup.FindAction(ActionName: String): TMbtCustomAction;
+var
+  x: Integer;
+  ItemName: String;
+begin
+  ActionName := LowerCase(ActionName);
+  Result := nil;
+  for x := 0 to Count - 1 do begin
+    ItemName := LowerCase(Items[x].Name);
+    if ItemName = ActionName then begin;
+      Result := Items[x];
+      break;
+    end;
+  end;
+end;
+
+
+
+
+
+function TMbtInputList.Find(InputName: String): TMbtInput;
+var
+  x: Integer;
+  ItemName: String;
+begin
+  InputName := LowerCase(InputName);
+  Result := nil;
+  for x := 0 to Count - 1 do begin
+    ItemName := LowerCase(Items[x].Name);
+    if ItemName = InputName then begin;
+      Result := Items[x];
+      break;
+    end;
+  end;
+end;
+
+
+
+
+
+constructor TMbtConfig.Create;
+begin
+  inherited;
+  FConnection := TZConnection.Create(nil);
+  FGroupList := TMbtGroupList.Create;
+end;
+
+destructor TMbtConfig.Destroy;
+begin
+
+  if Assigned(FConnection) then
+    FreeAndNil(FConnection);
+  inherited;
+end;
+
+procedure TMbtConfig.LoadFromFile(AFileName: String);
+var
+  ConfigFile: IXmlDocument;
+  RootList: IXMLNodeList;
+  GroupList: IXMLNodeList;
+  x: Integer;
+  RootNode: IXMLNode;
+  DBNode: IXmlNode;
+  GroupNode: IXMLNode;
+  GroupName: String;
+begin
+  try
+    ConfigFile := TZXmlDocument.Create as IXmlDocument;
+    ConfigFile.LoadFromFile(AFileName);
+
+    RootList := ConfigFile.GetChildNodes;
+    if RootList.Count = 1 then begin
+      RootNode := RootList.Get(0);
+      if RootNode.GetNodeName <> 'mbtconfig' then
+        raise Exception.Create('The configuration root node name must be "mbtconfig".');
+
+      DBNode := RootNode.ChildNodes.FindNode('database');
+      if not Assigned(DBNode) then
+        raise Exception.Create('No database config node found!');
+
+      LoadDbConfig(DBNode);
+
+      GroupNode := RootNode.ChildNodes.FindNode('groups');
+      if not Assigned(GroupNode) then
+        raise Exception.Create('No group node found!');
+
+      GroupList := GroupNode.ChildNodes;
+
+      if GroupList.Count > 0 then begin
+        for x := 0 to GroupList.Count - 1 do begin
+          GroupNode := GroupList.Get(x);
+          if GroupNode.GetNodeName <> 'group' then
+            raise Exception.Create('No node types besides "group" are allowed inside the groups tag! Found: ' + GroupNode.GetNodeName);
+          LoadGroup(GroupNode);
+        end;
+      end;
+    end else if RootList.Count = 0 then
+      raise Exception.Create('No XML Root List found!')
+    else
+      raise Exception.Create('More than one root node found. First node: ' + RootList.Get(0).GetNodeName);
+  except
+    on E: Exception do begin
+      Log('Error while loading configuration: ' + E.Message);
+    end;
+  end;
+end;
+
+procedure TMbtConfig.LoadGroup(Node: IXMLNode);
+var
+  Group: TMbtActionGroup;
+  GroupName: String;
+  ActionList: IXMLNodeList;
+  ActionNode: IXMLNode;
+  x: Integer;
+  ActionType: String;
+  ActionName: String;
+begin
+  GroupName := VarToStr(Node.GetAttribute('name'));
+  Group := TMbtActionGroup.Create;
+  Group.Name := GroupName;
+
+  ActionList := Node.GetChildNodes;
+  for x := ActionList.Count - 1 downto 0 do begin
+    ActionNode := ActionList.Get(x);
+    if ActionNode.GetNodeName <> 'action' then
+      raise Exception.Create('No node types besides "action" are allowed in the group node. Groupname: ' + GroupName + ' Node Index: ' + IntToStr(x));
+
+    ActionName := VarToStr(ActionNode.GetAttribute('name'));
+    if ActionName = '' then
+      raise Exception.Create('Action with index ' + IntToStr(x) + ' has no name.');
+    ActionType := VarToStr(ActionNode.GetAttribute('type'));
+    if ActionType = 'readregisters' then begin
+      Group.Insert(0, LoadReadRegistersAction(ActionNode, Group));
+    end else if ActionType = 'sqlexec' then begin
+      Group.Insert(0, LoadSqlExecAction(ActionNode));
+    end else if ActionType = 'sqlselect' then begin
+      Group.Insert(0, LoadSqlSelectAction(ActionNode));
+    end else raise
+      Exception.Create('Action "' + ActionName + '" has unsupported type "' + ActionType + '".');
+  end;
+
+  FGroupList.Add(Group);
+end;
+
+function TMbtConfig.LoadSqlExecAction(Node: IXMLNode): TMbtSqlExecAction;
+var
+  SQLNode: IXMLNode;
+  x: Integer;
+begin
+  Result := TMbtSqlExecAction.Create(FConnection);
+  Result.Name := VarToStr(Node.Attributes['name']);
+  SQLNode := Node.GetChildNodes.FindNode('sql');
+  if not Assigned(SQLNode) then
+    raise Exception.Create('Action "' + Result.Name + '" has no sql node.');
+  Result.SQL := SQLNode.GetText;
+end;
+
+function TMbtConfig.LoadSqlSelectAction(Node: IXMLNode): TMbtSqlSelectAction;
+begin
+  // ToDo: Implement LoadSqlSelectAction
+  raise Exception.Create('Not supported yet!');
+end;
+
+function TMbtConfig.LoadReadRegistersAction(Node: IXMLNode; ActionGroup: TMbtActionGroup): TMbtReadHoldingRegistersAction;
+var
+  TempStr: String;
+  OutputsNode: IXMLNode;
+begin
+  Result := TMbtReadHoldingRegistersAction.Create;
+  Result.Name := VarToStr(Node.Attributes['name']);
+  Result.ComPort := VarToStr(Node.Attributes['comport']);
+  Result.BaudRate := VarToInt(Node.Attributes['baudrate']);
+  Result.ModbusFormat := sfRTU;
+  TempStr := VarToStr(Node.Attributes['parity']);
+  case Length(TempStr) of
+    0: Result.Parity := 'N';
+    1: Result.Parity := TempStr[1];
+    else
+      raise Exception.Create('Parity must be only one character.');
+  end;
+  Result.DataBits := VarToInt(Node.Attributes['databits']);
+  Result.StopBits := VarToInt(Node.Attributes['stopbits']);
+  Result.FlowControl := flowNone;
+  Result.StartRegister := VarToInt(Node.Attributes['startregister']);
+  Result.RegisterCount := VarToInt(Node.Attributes['registercount']);
+  Result.DeviceAddress := VarToInt(Node.Attributes['deviceaddress']);
+
+  OutputsNode := Node.ChildNodes.FindNode('outputs');
+  if Assigned(OutputsNode) then
+    LoadModbusOutputs(Result, OutputsNode.GetChildNodes, ActionGroup);
+end;
+
+procedure TMbtConfig.LoadModbusOutputs(Action: TMbtReadHoldingRegistersAction; OutputList: IXMLNodeList; ActionGroup: TMbtActionGroup);
+var
+  x: Integer;
+  OutputNode: IXMLNode;
+  OutPut: TMbtModbusOutput;
+  TempStr: String;
+  InputsNode: IXMLNode;
+begin
+  for x := 0 to OutputList.Count - 1 do begin
+    OutputNode := OutputList.Get(x);
+    Output := TMbtModbusOutput.Create;
+    TempStr := VarToStr(OutputNode.Attributes['type']);
+    if tempstr = 'word' then
+      OutPut.DataType := dtWord
+    else if TempStr = 'integer' then
+      OutPut.DataType := dtInteger
+    else if TempStr = 'single' then
+      OutPut.DataType := dtSingle
+    else if TempStr = 'double' then
+      OutPut.DataType := dtDouble
+    else
+      raise Exception.Create('Data type "' + TempStr + 'is not supported on Modbus input #' + IntToStr(x + 1) + ' in action "' + Action.Name + '".');
+    OutPut.Offset := OutputNode.Attributes['offset'];
+
+    InputsNode := OutputNode.ChildNodes.FindNode('connectedinputs');
+    if Assigned(InputsNode) then;
+      LoadConnectedInputs(OutPut.InputList, InputsNode.ChildNodes, ActionGroup, Action.Name, x + 1);
+
+    Action.OutputList.Add(OutPut);
+  end;
+end;
+
+procedure TMbtConfig.LoadConnectedInputs(InputList: TMbtInputList; NodeList: IXMLNodeList; ActionGroup: TMbtActionGroup; const ActionName: String; const OutputNo: Integer);
+var
+  x: Integer;
+  TargetActionName, TargetInputName: String;
+  InputNode: IXMLNode;
+  Action: TMbtCustomAction;
+  Input: TMbtInput;
+begin
+  for x := 0 to NodeList.Count - 1 do begin
+    InputNode := NodeList.Get(x);
+    TargetActionName := VarToStr(InputNode.Attributes['action']);
+    TargetInputName := VarToStr(InputNode.Attributes['name']);
+
+    Action := ActionGroup.FindAction(TargetActionName);
+    if not Assigned(Action) then
+      raise Exception.Create('No action named "' + TargetActionName + '" was found. Action: ' + ActionName + ' Output: ' +  IntToStr(OutputNo));
+
+    Input := Action.InputList.Find(TargetInputName);
+    if not Assigned(Input) then
+      raise Exception.Create('No input named "' + TargetInputName + '" was found in action "' + TargetActionName + '". Action: ' + ActionName + ' Output: ' +  IntToStr(OutputNo));
+
+    InputList.Add(Input);
+  end;
+end;
+
+procedure TMbtConfig.LoadDbConfig(Node: IXMLNode);
+var
+  ConfigList: IXMLNodeList;
+
+  function GetStr(Item: String): String;
+  var
+    Node: IXMLNode;
+  begin
+    node := ConfigList.FindNode(Item);
+    if Assigned(node)
+      then Result := Node.GetText
+    else
+      Result := '';
+  end;
+
+begin
+  ConfigList := Node.ChildNodes;
+  FConnection.Protocol := GetStr('protocol');
+  FConnection.HostName := GetStr('hostname');
+  FConnection.Database := GetStr('database');
+  FConnection.User := GetStr('user');
+  FConnection.Password := GetStr('password');
+  FConnection.ClientCodepage := GetStr('characterset');
+  FConnection.LibraryLocation := GetStr('librarylocation');
+end;
+
+procedure TMbtConfig.Log(Msg: String);
+begin
+  if Assigned(FLogProcedure) then
+    FLogProcedure(FormatDateTime('YYYY-MM-DD HH:NN:SS', Now) + ' ' + Msg);
+end;
+
+procedure TMbtConfig.Execute;
+var
+  x, y: Integer;
+  Group: TMbtActionGroup;
+  Action: TMbtCustomAction;
+begin
+  try
+    FConnection.Connect;
+  except
+    on E: Exception do
+      Log('Error while connecting to database: ' + E.Message);
+  end;
+
+  if FConnection.Connected then begin
+    for x := 0 to FGroupList.Count - 1 do begin
+      Group := FGroupList.Items[x];
+      Log('Executing Group ' + Group.Name);
+      try
+        for y := 0 to Group.Count - 1 do begin
+          Action := Group.Items[y];
+          Action.Execute;
+        end;
+      except
+        on E: Exception do begin
+          Log('Error while Executing group ' + Group.Name  + ' in action ' + Action.Name + ': ' + E.Message);
+          Log('Aborting Group ' + Group.Name);
+        end;
+      end;
+    end;
+  end;
+  Log('Execution finished.');
 end;
 
 end.
