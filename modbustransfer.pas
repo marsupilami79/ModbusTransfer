@@ -42,8 +42,6 @@ type
       property Name: String read FName write FName;
   end;
 
-
-
   TMbtCustomOutput = class
     protected
       FName: String;
@@ -100,20 +98,25 @@ type
       property SQL: String read GetSQL write SetSQL;
   end;
 
-  TMbtReadHoldingRegistersAction = class(TMbtCustomAction)
+  TMbtCustomSerialModbusAction = class(TMbtCustomAction)
+  protected
+    FComPort: String;
+    FBaudRate: Integer;
+    FModbusFormat: TMBSerialFormat;
+    FParity: Char;
+    FDataBits: Integer;
+    FStopBits: Integer;
+    FFlowControl: TMBSerialFlow;
+    FDeviceAddress: Byte;
+    procedure CheckError(Res: Integer);
+  end;
+
+
+  TMbtReadHoldingRegistersAction = class(TMbtCustomSerialModbusAction)
     protected
-      FComPort: String;
-      FBaudRate: Integer;
-      FModbusFormat: TMBSerialFormat;
-      FParity: Char;
-      FDataBits: Integer;
-      FStopBits: Integer;
-      FFlowControl: TMBSerialFlow;
       FStartRegister: Word;
       FRegisterCount: Word;
-      FDeviceAddress: Byte;
       FOutputList: TMbtModbusOutputList;
-      procedure CheckError(Res: Integer);
     public
       procedure Execute; override;
       property OutputList: TMbtModbusOutputList read FOutputList;
@@ -133,6 +136,25 @@ type
       property FlowControl: TMBSerialFlow read FFlowControl write FFlowControl;
       property StartRegister: Word read FStartRegister write FStartRegister;
       property RegisterCount: Word read FRegisterCount write FRegisterCount;
+      property DeviceAddress: Byte read FDeviceAddress write FDeviceAddress;
+  end;
+
+  TMbtWriteCoilAction = class(TMbtCustomSerialModbusAction)
+    protected
+      FCoil: Word;
+      FCoilValue: Boolean;
+    public
+      procedure Execute; override;
+    published
+      property ComPort:String read FComPort write FComPort;
+      property BaudRate: Integer read FBaudRate write FBaudRate;
+      property ModbusFormat: TMBSerialFormat read FModbusFormat write FModbusFormat;
+      property Parity: Char read FParity write FParity;
+      property DataBits: Integer read FDataBits write FDataBits;
+      property StopBits: Integer read FStopBits write FStopBits;
+      property FlowControl: TMBSerialFlow read FFlowControl write FFlowControl;
+      property Coil: Word read FCoil write FCoil;
+      property CoilValue: Boolean read FCoilValue write FCoilValue;
       property DeviceAddress: Byte read FDeviceAddress write FDeviceAddress;
   end;
 
@@ -156,6 +178,7 @@ type
       function LoadSqlExecAction(Node: IXMLNode): TMbtSqlExecAction;
       function LoadSqlSelectAction(Node: IXMLNode): TMbtSqlSelectAction;
       function LoadReadRegistersAction(Node: IXMLNode; ActionGroup: TMbtActionGroup): TMbtReadHoldingRegistersAction;
+      function LoadWriteCoilAction(Node: IXMLNode; ActionGroup: TMbtActionGroup): TMbtWriteCoilAction;
       procedure LoadModbusOutputs(Action: TMbtReadHoldingRegistersAction; OutputList: IXMLNodeList; ActionGroup: TMbtActionGroup);
       procedure LoadConnectedInputs(InputList: TMbtInputList; NodeList: IXMLNodeList; ActionGroup: TMbtActionGroup; const ActionName: String; const OutputNo: Integer);
       procedure Log(Msg: String);
@@ -170,7 +193,7 @@ type
 implementation
 
 uses
-  variants;
+  Variants, ZAbstractRODataset;
 
 function VarToInt(const AVar: Variant): Integer;
 begin
@@ -241,6 +264,8 @@ begin
   inherited Create;
   FQuery := TZQuery.Create(nil);
   FQuery.Connection := Connection;
+  FQuery.Properties.Add('emulate_prepares=true');
+  FQuery.Options := FQuery.Options - [doPreferPrepared];
 end;
 
 destructor TMbtSqlExecAction.Destroy;
@@ -328,6 +353,13 @@ end;
 
 
 
+procedure TMbtCustomSerialModbusAction.CheckError(Res: Integer);
+begin
+  if res <> 0 then
+    raise Exception.Create('Modbus Error: $' + IntToHex(Res, 8));
+end;
+
+
 
 
 
@@ -342,12 +374,6 @@ begin
   if Assigned(FOutputList) then
     FreeAndNil(FOutputList);
   inherited;
-end;
-
-procedure TMbtReadHoldingRegistersAction.CheckError(Res: Integer);
-begin
-  if res <> 0 then
-    raise Exception.Create('Modbus Error: $' + IntToHex(Res, 8));
 end;
 
 procedure TMbtReadHoldingRegistersAction.CopyWord(const Registers: Array of Word; Offset: Integer; Input: TMbtInput);
@@ -389,28 +415,71 @@ var
   Registers: Array of Word;
   x, y: Integer;
 begin
-  SetLength(Registers, FRegisterCount);
+  try
+    SetLength(Registers, FRegisterCount);
 
-  Dev := TSnapMBBroker.Create(FModbusFormat, FComPort, FBaudRate, FParity, FDataBits, FStopBits, FFlowControl);
-  Dev.ChangeTo(FModbusFormat, FComPort, FBaudRate, FParity, FDataBits, FStopBits, FFlowControl);
-  Dev.SetLocalParam(par_BaseAddressZero, 1);
-  Dev.SetLocalParam(par_MaxRetries, 2);
-  Res := Dev.Connect;
-  CheckError(res);
-  Res := Dev.ReadHoldingRegisters(FDeviceAddress, FStartRegister, FRegisterCount, @Registers[0]);
-  CheckError(res);
+    Dev := TSnapMBBroker.Create(FModbusFormat, FComPort, FBaudRate, FParity, FDataBits, FStopBits, FFlowControl);
+    Dev.ChangeTo(FModbusFormat, FComPort, FBaudRate, FParity, FDataBits, FStopBits, FFlowControl);
+    Dev.SetLocalParam(par_BaseAddressZero, 1);
+    Dev.SetLocalParam(par_MaxRetries, 2);
+    Res := Dev.Connect;
+    CheckError(res);
 
-  for x := 0 to FOutputList.Count - 1 do begin
-    for y := 0 to FOutputList.Items[x].InputList.Count - 1 do begin;
-      case FOutputList.Items[x].DataType of
-        dtWord: CopyWord(Registers, FOutputList.Items[x].Offset, FOutputList.Items[x].InputList.Items[y]);
-        dtInteger: CopyInt(Registers, FOutputList.Items[x].Offset, FOutputList.Items[x].InputList.Items[y]);
-        dtSingle: CopySingle(Registers, FOutputList.Items[x].Offset, FOutputList.Items[x].InputList.Items[y]);
-        dtDouble: CopyDouble(Registers, FOutputList.Items[x].Offset, FOutputList.Items[x].InputList.Items[y]);
+    Res := Dev.ReadInputRegisters(FDeviceAddress, FStartRegister, FRegisterCount, @Registers[0]);
+    CheckError(res);
+
+    for x := 0 to FOutputList.Count - 1 do begin
+      for y := 0 to FOutputList.Items[x].InputList.Count - 1 do begin;
+        case FOutputList.Items[x].DataType of
+          dtWord: CopyWord(Registers, FOutputList.Items[x].Offset, FOutputList.Items[x].InputList.Items[y]);
+          dtInteger: CopyInt(Registers, FOutputList.Items[x].Offset, FOutputList.Items[x].InputList.Items[y]);
+          dtSingle: CopySingle(Registers, FOutputList.Items[x].Offset, FOutputList.Items[x].InputList.Items[y]);
+          dtDouble: CopyDouble(Registers, FOutputList.Items[x].Offset, FOutputList.Items[x].InputList.Items[y]);
+        end;
       end;
+    end;
+  finally
+    if Assigned(Dev) then begin;
+      Dev.Disconnect;
+      FreeAndNil(Dev);
     end;
   end;
 end;
+
+
+
+procedure TMbtWriteCoilAction.Execute;
+var
+  Dev: TSnapMBBroker;
+  Res: Integer;
+  x, y: Integer;
+begin
+  try
+    Dev := TSnapMBBroker.Create(FModbusFormat, FComPort, FBaudRate, FParity, FDataBits, FStopBits, FFlowControl);
+    Dev.ChangeTo(FModbusFormat, FComPort, FBaudRate, FParity, FDataBits, FStopBits, FFlowControl);
+    Dev.SetLocalParam(par_BaseAddressZero, 1);
+    Dev.SetLocalParam(par_MaxRetries, 2);
+    Res := Dev.Connect;
+    CheckError(res);
+
+    if FCoilValue then
+      Res := Dev.WriteSingleCoil(FDeviceAddress, FCoil, $FFFF)
+    else
+      Res := Dev.WriteSingleCoil(FDeviceAddress, FCoil, $0000);
+    CheckError(res);
+  finally
+    if Assigned(Dev) then begin
+      Dev.Disconnect;
+      FreeAndNil(Dev);
+    end;
+  end;
+end;
+
+
+
+
+
+
 
 
 
@@ -458,6 +527,7 @@ constructor TMbtConfig.Create;
 begin
   inherited;
   FConnection := TZConnection.Create(nil);
+  FConnection.Properties.Add('BinaryWireResultMode=false');
   FGroupList := TMbtGroupList.Create;
 end;
 
@@ -547,6 +617,8 @@ begin
     ActionType := VarToStr(ActionNode.GetAttribute('type'));
     if ActionType = 'readregisters' then begin
       Group.Insert(0, LoadReadRegistersAction(ActionNode, Group));
+    end else if ActionType = 'writecoil' then begin
+      Group.Insert(0, LoadWriteCoilAction(ActionNode, Group));
     end else if ActionType = 'sqlexec' then begin
       Group.Insert(0, LoadSqlExecAction(ActionNode));
     end else if ActionType = 'sqlselect' then begin
@@ -604,6 +676,32 @@ begin
   OutputsNode := Node.ChildNodes.FindNode('outputs');
   if Assigned(OutputsNode) then
     LoadModbusOutputs(Result, OutputsNode.GetChildNodes, ActionGroup);
+end;
+
+function TMbtConfig.LoadWriteCoilAction(Node: IXMLNode; ActionGroup: TMbtActionGroup): TMbtWriteCoilAction;
+var
+  TempStr: String;
+  OutputsNode: IXMLNode;
+begin
+  Result := TMbtWriteCoilAction.Create;
+  Result.Name := VarToStr(Node.Attributes['name']);
+  Result.ComPort := VarToStr(Node.Attributes['comport']);
+  Result.BaudRate := VarToInt(Node.Attributes['baudrate']);
+  Result.ModbusFormat := sfRTU;
+  TempStr := VarToStr(Node.Attributes['parity']);
+  case Length(TempStr) of
+    0: Result.Parity := 'N';
+    1: Result.Parity := TempStr[1];
+    else
+      raise Exception.Create('Parity must be only one character.');
+  end;
+  Result.DataBits := VarToInt(Node.Attributes['databits']);
+  Result.StopBits := VarToInt(Node.Attributes['stopbits']);
+  Result.FlowControl := flowNone;
+  Result.DeviceAddress := VarToInt(Node.Attributes['deviceaddress']);
+
+  Result.Coil := VarToInt(Node.Attributes['coil']);
+  Result.CoilValue := StrToBool(VarToStr(Node.Attributes['coilvalue']));
 end;
 
 procedure TMbtConfig.LoadModbusOutputs(Action: TMbtReadHoldingRegistersAction; OutputList: IXMLNodeList; ActionGroup: TMbtActionGroup);
@@ -692,7 +790,7 @@ end;
 procedure TMbtConfig.Log(Msg: String);
 begin
   if Assigned(FLogProcedure) then
-    FLogProcedure(FormatDateTime('YYYY-MM-DD HH:NN:SS', Now) + ' ' + Msg);
+    FLogProcedure(Msg);
 end;
 
 procedure TMbtConfig.Execute;
@@ -715,6 +813,7 @@ begin
       try
         for y := 0 to Group.Count - 1 do begin
           Action := Group.Items[y];
+          Log('Executing Action ' + Action.Name);
           Action.Execute;
         end;
       except
